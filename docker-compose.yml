@@ -1,0 +1,43 @@
+# Secrets come from a root .env file; generate them with: npm run keys -w backend
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: levelup
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-levelup}
+      POSTGRES_DB: levelup
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U levelup"]
+      interval: 5s
+      retries: 10
+
+  api:
+    build: ./backend
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://levelup:${POSTGRES_PASSWORD:-levelup}@db:5432/levelup
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set ENCRYPTION_KEY}
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:admin@example.com}
+      CORS_ORIGINS: ${PUBLIC_URL:-http://localhost:8080}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      TRUST_PROXY: 1
+      RUN_JOBS: "true"
+    ports:
+      - "4000:4000"
+
+  web:
+    build: ./frontend
+    depends_on:
+      - api
+    ports:
+      - "8080:80"
+
+volumes:
+  pgdata:

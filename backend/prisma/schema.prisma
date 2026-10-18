@@ -1,0 +1,257 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Provider {
+  MANUAL
+  LEETCODE
+  TAKEUFORWARD
+  DUOLINGO
+  VELOCITYFIT
+}
+
+enum TaskCategory {
+  WATER
+  WORKOUT
+  READING
+  CUSTOM
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TargetCadence {
+  DAILY
+  WEEKLY
+}
+
+enum ProjectStatus {
+  ACTIVE
+  COMPLETED
+  ARCHIVED
+}
+
+enum XpSource {
+  TASK_COMPLETE
+  PERFECT_DAY
+  MILESTONE_COMPLETE
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  /// IANA zone. Every "day" key for this user is computed in it.
+  timezone     String   @default("UTC")
+  xpTotal      Int      @default(0)
+  level        Int      @default(1)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  sessions          Session[]
+  settings          UserSettings?
+  tasks             Task[]
+  entries           TaskEntry[]
+  projects          Project[]
+  milestones        ProjectMilestone[]
+  workLogs          ProjectWorkLog[]
+  connections       Connection[]
+  xpEvents          XpEvent[]
+  pushSubscriptions PushSubscription[]
+}
+
+/// One row per signed-in device. Only the SHA-256 of the refresh token is stored.
+model Session {
+  id         String   @id @default(cuid())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId     String
+  tokenHash  String   @unique
+  /// The token this one replaced. Stays usable briefly after rotation, so a
+  /// response lost to a reload or a dropped connection doesn't sign the user out.
+  previousTokenHash String?   @unique
+  rotatedAt         DateTime?
+  /// The current token, encrypted, so a retry with the previous token gets the
+  /// same answer instead of rotating again.
+  tokenCipher       String?
+  userAgent  String?
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  lastUsedAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model UserSettings {
+  user               User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId             String  @id
+  /// "HH:MM", 24-hour, in the user's timezone.
+  reminderTime       String  @default("21:00")
+  remindersEnabled   Boolean @default(true)
+  reminderHourly     Boolean @default(true)
+  countdownEnabled   Boolean @default(true)
+  countdownLeadHours Int     @default(2)
+}
+
+/// A recurring task template. Empty `activeDays` means every day.
+model Task {
+  id          String        @id @default(cuid())
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId      String
+  project     Project?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  projectId   String?
+  title       String
+  description String        @default("")
+  category    TaskCategory  @default(CUSTOM)
+  provider    Provider      @default(MANUAL)
+  target      Int           @default(1)
+  unit        String        @default("times")
+  activeDays  Int[]         @default([])
+  priority    TaskPriority  @default(MEDIUM)
+  cadence     TargetCadence @default(DAILY)
+  pausedAt    DateTime?
+  archivedAt  DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  entries     TaskEntry[]
+
+  @@index([userId, archivedAt])
+  @@index([projectId])
+}
+
+/// One row per task per period (a day, or an ISO week for weekly tasks).
+model TaskEntry {
+  id          String    @id @default(cuid())
+  task        Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  taskId      String
+  /// Denormalised so streak and history queries never need the join to filter.
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId      String
+  /// YYYY-MM-DD in the user's timezone; the Monday for weekly tasks.
+  day         String
+  periodKey   String
+  progress    Int       @default(0)
+  target      Int       @default(1)
+  completed   Boolean   @default(false)
+  autoTracked Boolean   @default(false)
+  completedAt DateTime?
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([taskId, periodKey])
+  @@index([userId, day])
+}
+
+model Project {
+  id               String             @id @default(cuid())
+  user             User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId           String
+  name             String
+  description      String             @default("")
+  deadline         DateTime?          @db.Date
+  status           ProjectStatus      @default(ACTIVE)
+  estimatedMinutes Int?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  tasks            Task[]
+  milestones       ProjectMilestone[]
+  workLogs         ProjectWorkLog[]
+
+  @@index([userId, status])
+}
+
+model ProjectMilestone {
+  id          String    @id @default(cuid())
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId   String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId      String
+  title       String
+  weight      Int       @default(1)
+  dueDate     DateTime? @db.Date
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([projectId])
+  @@index([userId])
+}
+
+model ProjectWorkLog {
+  id              String   @id @default(cuid())
+  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId       String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId          String
+  durationMinutes Int
+  day             String
+  note            String   @default("")
+  createdAt       DateTime @default(now())
+
+  @@index([projectId, day])
+  @@index([userId, day])
+}
+
+/// Handle and credential for an external app. Secrets are AES-256-GCM encrypted.
+model Connection {
+  id              String    @id @default(cuid())
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId          String
+  provider        Provider
+  handle          String?
+  secretEncrypted String?
+  baseUrl         String?
+  enabled         Boolean   @default(true)
+  lastSyncedAt    DateTime?
+  lastSyncOk      Boolean   @default(true)
+  lastSyncError   String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([userId, provider])
+  @@index([enabled, provider])
+}
+
+model XpEvent {
+  id             String   @id @default(cuid())
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId         String
+  source         XpSource
+  sourceId       String
+  periodKey      String
+  day            String
+  xp             Int
+  idempotencyKey String   @unique
+  createdAt      DateTime @default(now())
+
+  @@index([userId, day])
+  @@index([userId, periodKey])
+}
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+/// A lease that lets exactly one instance run a scheduled job at a time.
+model JobLease {
+  name        String   @id
+  holder      String
+  leasedUntil DateTime
+}

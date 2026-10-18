@@ -1,0 +1,16 @@
+{
+  "name": "LevelUp",
+  "short_name": "LevelUp",
+  "description": "Recurring tasks, projects and XP.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#08080d",
+  "theme_color": "#08080d",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
